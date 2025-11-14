@@ -1,42 +1,106 @@
 import streamlit as st
 import numpy as np
+import tensorflow as tf
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.models import load_model
 import pickle
+import re
+import string
 
-# Load tokenizer and model
-with open("tokenizer.pkl", "rb") as handle:
-    tokenizer = pickle.load(handle)
+# ============================================================
+#                APP CONFIGURATION
+# ============================================================
 
-model = load_model("lstm_model.h5")
+st.set_page_config(page_title="Emotion Classifier", layout="centered")
 
-max_len = 200   # should match your training code
+st.title("🎭 Emotion Classification Using Bi-LSTM + GloVe")
+st.write("Enter a text below and the model will predict the most likely emotion.")
 
-st.title("NLP Text Classification App")
-st.write("Enter text and the model will classify it using LSTM.")
+# ============================================================
+#                LOAD MODEL & TOKENIZER
+# ============================================================
 
-# Input box
-user_input = st.text_area("Enter your text here")
+MODEL_PATH = "best_model.h5"
+TOKENIZER_PATH = "tokenizer.pkl"
+MAX_LEN = 50  # must match your training setting
 
-if st.button("Predict"):
-    if len(user_input.strip()) == 0:
+@st.cache_resource
+def load_model():
+    model = tf.keras.models.load_model(MODEL_PATH)
+    return model
+
+@st.cache_resource
+def load_tokenizer():
+    with open(TOKENIZER_PATH, "rb") as f:
+        tokenizer = pickle.load(f)
+    return tokenizer
+
+model = load_model()
+tokenizer = load_tokenizer()
+
+# ============================================================
+#                   EMOTION LABELS
+# ============================================================
+
+# Replace this list with your actual 27-class labels from your training
+emotion_labels = [
+    "admiration", "amusement", "anger", "annoyance", "approval", "caring",
+    "confusion", "curiosity", "desire", "disappointment", "disapproval",
+    "disgust", "embarrassment", "excitement", "fear", "gratitude", "grief",
+    "joy", "love", "nervousness", "optimism", "pride", "realization",
+    "relief", "remorse", "sadness", "surprise"
+]
+
+# ============================================================
+#                 TEXT PREPROCESSING
+# ============================================================
+
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r"http\S+", "", text)             # remove links
+    text = re.sub(r"@\w+", "", text)                # remove mentions
+    text = re.sub(r"#\w+", "", text)                # remove hashtags
+    text = text.translate(str.maketrans("", "", string.punctuation))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+def preprocess(text):
+    cleaned = clean_text(text)
+    seq = tokenizer.texts_to_sequences([cleaned])
+    padded = pad_sequences(seq, maxlen=MAX_LEN, padding="post")
+    return padded
+
+# ============================================================
+#                 PREDICTION FUNCTION
+# ============================================================
+
+def predict_emotion(text):
+    processed = preprocess(text)
+    probs = model.predict(processed)[0]
+    top_index = np.argmax(probs)
+    return emotion_labels[top_index], probs
+
+# ============================================================
+#                    STREAMLIT UI
+# ============================================================
+
+user_text = st.text_area("Enter your text here:", height=120)
+
+if st.button("Predict Emotion"):
+    if user_text.strip() == "":
         st.warning("Please enter some text.")
     else:
-        seq = tokenizer.texts_to_sequences([user_input])
-        padded = pad_sequences(seq, maxlen=max_len)
+        with st.spinner("Analyzing emotion..."):
+            label, probs = predict_emotion(user_text)
 
-        prediction = model.predict(padded)
-        class_id = np.argmax(prediction)
+        st.markdown(f"### 📌 Predicted Emotion: **{label.upper()}**")
 
-        st.success(f"Predicted Class: {class_id}")
+        # Display probability chart
+        st.subheader("Prediction Probabilities")
+        chart_data = {emotion_labels[i]: float(probs[i]) for i in range(len(emotion_labels))}
+        st.bar_chart(chart_data)
 
-        st.write("### Model Confidence Scores")
-        st.json({f"class_{i}": float(prediction[0][i]) for i in range(len(prediction[0]))})
+# Footer
+st.markdown("---")
+st.markdown("Developed using **Bi-LSTM + GloVe embeddings** | Streamlit Deployment")
 
-# Show metrics section
-st.sidebar.header("Model Performance Metrics")
-st.sidebar.write("**Accuracy:** 0.58")
-st.sidebar.write("**F1 Score:** 0.58")
-st.sidebar.write("**Precision:** (your value)")
-st.sidebar.write("**Recall:** (your value)")
 
